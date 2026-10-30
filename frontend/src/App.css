@@ -448,3 +448,25 @@ body{background:var(--canvas);color:var(--ink);font-size:15px;line-height:1.5}
 @media(max-width:900px){.stats-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.stat-item{min-height:36px}.stat-item:nth-child(3){border-right:0}.hero{padding:45px 38px 32px}.category-discovery{padding:20px}.job-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.job-card{padding:18px}.admin-workspace{grid-template-columns:1fr}.admin-sidebar{position:static;display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid #e4ebe6;padding:0 0 9px}.admin-sidebar a{flex:0 0 auto}.admin-main{padding-top:4px}}
 @media(max-width:640px){.site-header{height:auto;min-height:68px;display:flex;flex-wrap:wrap;padding:10px 0;gap:8px}.brand{order:1}.header-post{order:2;margin-left:auto;min-height:39px}.mobile-menu-toggle{order:3;width:40px;height:39px;display:grid;place-items:center;border:1px solid #dce6df;border-radius:10px;background:white;color:#38584a;font-size:18px}.site-nav{order:4;display:none;width:100%;margin:4px 0 0;padding:8px;border:1px solid #e1e9e4;border-radius:12px;background:#fff;box-shadow:0 12px 25px #183d2d10}.site-nav.is-open{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px}.site-nav a,.site-nav button{min-height:41px;display:flex;align-items:center;padding:0 11px;border-radius:8px;text-align:left;font-size:13px}.site-nav a:hover,.site-nav button:hover{background:#f0f7f2}.hero{margin-top:12px;padding:33px 20px 23px;border-radius:19px}.hero h1{font-size:clamp(35px,10vw,46px);letter-spacing:-1.8px}.hero-description{font-size:14px}.stats-strip{grid-template-columns:repeat(2,minmax(0,1fr));padding:13px 8px}.stat-item{padding:4px 2px;border-right:0}.stat-item:nth-child(odd){border-right:1px solid var(--line)}.stat-item:last-of-type{grid-column:1/-1;border-right:0}.stat-value{font-size:18px}.category-discovery{padding:17px 14px;margin-bottom:25px}.category-discovery-heading{align-items:flex-start;flex-direction:column;gap:8px}.category-discovery-heading h2{font-size:19px}.category-chips{gap:7px}.category-chips button{min-height:38px;padding:0 11px;font-size:12px}.featured-ad-grid{grid-template-columns:1fr}.featured-ad-card .ad-preview{min-height:0}.section-heading h2{font-size:23px}.job-grid{grid-template-columns:1fr}.job-card{padding:18px}.job-card h3{font-size:17px}.job-meta{font-size:12px}.job-summary{font-size:13px}.dialog-backdrop{align-items:flex-end;padding:0}.dialog,.dialog-large{width:100%;max-width:none;max-height:94dvh;border-radius:19px 19px 0 0}.dialog-header{padding:15px 17px 12px}.dialog-header h2{font-size:19px}.dialog-body{padding:17px 16px 24px}.ad-stepper{grid-template-columns:repeat(4,minmax(60px,1fr));gap:3px;margin-bottom:14px}.ad-step{display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:5px 2px}.ad-step:not(:last-child)::after{left:27px;right:-5px;top:20px}.ad-step span{width:28px;height:28px}.ad-step strong{max-width:100%;font-size:9px;line-height:1.2}.ad-category-choices{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.ad-category-choices button{min-height:64px;padding:9px;font-size:12px}.ad-category-choices button>span{width:32px;height:32px;flex:0 0 32px}.ad-builder-actions.ad-step-actions .button{flex:1;min-width:125px}.ad-directory-heading{align-items:flex-start;flex-direction:column}.ad-directory-grid{grid-template-columns:1fr}.admin-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-sidebar a{padding:9px 11px;font-size:12px}.admin-ad-management{padding:13px}.admin-ad-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.admin-actions>*{width:100%}.admin-table-wrap table{min-width:760px}.public-business{margin:10px;padding:17px;border-radius:15px}.business-public-heading{align-items:flex-start}.business-public-heading img{width:64px;height:64px}.ad-form-grid{grid-template-columns:1fr}.ad-field-wide{grid-column:auto}.my-ad-actions,.admin-ad-actions{gap:7px}.detail-apply{position:static}.notice{top:8px;right:8px;width:calc(100% - 16px)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* --- JOB DETAILS FORMATTING --- */
+.job-details section {
+    margin-bottom: 24px;
+}
+.job-details h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1a3c2b;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 4px;
+}
+.detail-description {
+    font-size: 14px;
+    line-height: 1.8;
+    color: #374151;
+    white-space: pre-wrap;
+}
+.detail-description p {
+    margin-bottom: 12px;
+}

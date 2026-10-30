@@ -165,9 +165,17 @@ function App() {
 
   useEffect(() => { loadSavedJobs(); }, [loadSavedJobs]);
 
-  const submitSearch = event => {
+  const submitSearch = async event => {
     event.preventDefault();
-    setCriteria({ search: searchText.trim(), location: locationText.trim() });
+    const newCriteria = { search: searchText.trim(), location: locationText.trim() };
+    setCriteria(newCriteria);
+    try {
+      const { data } = await api.get('/jobs', { params: { search: newCriteria.search, location: newCriteria.location, limit: 24, offset: 0 } });
+      setJobs(data.jobs || []);
+      setTotalJobs(data.total || 0);
+    } catch (e) {
+      setNotice({ type: 'error', message: friendlyError(e, 'Jobs could not be loaded.') });
+    }
   };
 
   const openJob = useCallback(async job => {

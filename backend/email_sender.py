@@ -73,7 +73,7 @@ class EmailSender:
             <div style="padding: 20px;">
                 <p>Dear <strong>{safe_name}</strong>,</p>
                 <p>Thank you for applying for <strong>{safe_title}</strong> at <strong>{safe_company}</strong>.</p>
-                <p>Your application has been submitted successfully!</p>
+                <p>Your application has been submitted successfully at Grafan!</p>
                 <p>The employer will review your application and contact you if shortlisted.</p>
                 <hr>
                 <p style="color: #666;">This is an automated confirmation from Grafan.</p>
@@ -93,6 +93,7 @@ class EmailSender:
         
         try:
             msg = MIMEMultipart()
+            msg['Reply-To'] = SMTP_USER
             msg['From'] = self.sender_email
             msg['To'] = to_email
             msg['Subject'] = subject

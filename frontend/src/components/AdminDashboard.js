@@ -1,14 +1,18 @@
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth as firebaseAuth } from '../firebase'; // Renamed to avoid conflict
 import React, { useCallback, useEffect, useState } from 'react';
 import { api, friendlyError } from '../api';
 import { AdPreview } from './AdvertisementHub';
 
-function auth(token) {
+// Helper function - renamed to avoid conflict with firebase auth
+function getAuthHeader(token) {
   return { headers: { Authorization: `Bearer ${token}` } };
 }
 
 export default function AdminDashboard({ onClose }) {
   const [token, setToken] = useState(() => window.sessionStorage.getItem('grafanAdminToken') || '');
-  const [draft, setDraft] = useState(token);
+  const [draft, setDraft] = useState(token); // This is email now
+  const [password, setPassword] = useState('');
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,59 +32,79 @@ export default function AdminDashboard({ onClose }) {
   const [adStatus, setAdStatus] = useState('');
 
   const load = useCallback(async (value, params = {}) => {
-    const cfg = auth(value);
-    const [statsResponse, sourcesResponse, jobsResponse] = await Promise.all([
-      api.get('/admin/scraping/stats', cfg), api.get('/admin/sources', cfg), api.get('/admin/jobs', { ...cfg, params: { limit: 100, search, source: filterSource, ...params } }),
-    ]);
-    const adsResponse = await api.get('/admin/ads', { ...cfg, params: { category: adCategory, status: adStatus } });
-    setStats(statsResponse.data);
-    setSources(sourcesResponse.data.sources || []);
-    setJobs(jobsResponse.data.jobs || []);
-    setAdvertisements(adsResponse.data.advertisements || []);
-    setAdCounts(adsResponse.data.counts || null);
-    setConnected(true);
+    const cfg = getAuthHeader(value);
+    try {
+      const [statsResponse, sourcesResponse, jobsResponse] = await Promise.all([
+        api.get('/admin/scraping/stats', cfg), 
+        api.get('/admin/sources', cfg), 
+        api.get('/admin/jobs', { ...cfg, params: { limit: 100, search, source: filterSource, ...params } }),
+      ]);
+      const adsResponse = await api.get('/admin/ads', { ...cfg, params: { category: adCategory, status: adStatus } });
+      setStats(statsResponse.data);
+      setSources(sourcesResponse.data.sources || []);
+      setJobs(jobsResponse.data.jobs || []);
+      setAdvertisements(adsResponse.data.advertisements || []);
+      setAdCounts(adsResponse.data.counts || null);
+      setConnected(true);
+      setError('');
+    } catch (e) {
+      setConnected(false);
+      throw e; // Re-throw so connect function can catch it
+    }
   }, [search, filterSource, adCategory, adStatus]);
+
+  // Load data when token changes
+  useEffect(() => {
+    if (!token) return;
+    load(token).catch(e => { 
+      setConnected(false); 
+      setError(friendlyError(e, 'Admin data could not be loaded.')); 
+    });
+  }, [token, load]);
 
   const reviewAd = async (ad, action) => {
     const reason = ['reject', 'request_changes'].includes(action) ? window.prompt(action === 'reject' ? 'Reason for rejection (required):' : 'Changes requested (required):') : null;
     if (['reject', 'request_changes'].includes(action) && !reason?.trim()) return;
     setBusy(true); setError('');
-    try { await api.post(`/admin/ads/${ad.id}/review`, { action, reason }, auth(token)); await load(token); }
+    try { 
+      await api.post(`/admin/ads/${ad.id}/review`, { action, reason }, getAuthHeader(token)); 
+      await load(token); 
+    }
     catch (e) { setError(friendlyError(e, 'Advertisement review could not be saved.')); }
     finally { setBusy(false); }
   };
 
-  useEffect(() => {
-    if (!token) return;
-    load(token).catch(e => { setConnected(false); setError(friendlyError(e, 'Admin data could not be loaded.')); });
-  }, [token, load]);
-
-  const connect = async event => {
+  const connect = async (event) => {
     event.preventDefault();
-    if (!draft.trim()) return;
+    if (!draft.trim() || !password) return;
     setBusy(true); setError('');
     try {
-      await load(draft.trim());
-      window.sessionStorage.setItem('grafanAdminToken', draft.trim());
-      setToken(draft.trim());
+      const userCredential = await signInWithEmailAndPassword(firebaseAuth, draft.trim(), password);
+      const idToken = await userCredential.user.getIdToken();
+      await load(idToken);
+      window.sessionStorage.setItem('grafanAdminToken', idToken);
+      setToken(idToken);
     } catch (e) {
-      setConnected(false); setError(friendlyError(e, 'Admin authentication failed. Check the token and server configuration.'));
+      setConnected(false);
+      setError(friendlyError(e, 'Firebase login failed. Check your email and password.'));
     } finally { setBusy(false); }
   };
 
-  const disconnect = () => {
+  const disconnect = async () => {
+    await signOut(firebaseAuth);
     window.sessionStorage.removeItem('grafanAdminToken');
-    setToken(''); setDraft(''); setConnected(false); setStats(null); setJobs([]);
+    setToken(''); setDraft(''); setPassword(''); setConnected(false); setStats(null); setJobs([]);
+    setError('');
   };
 
   const startScrape = async (sourceName, customUrl = '') => {
     setBusy(true); setError(''); setScrapeStatus('Starting scrape…');
     try {
       const response = customUrl
-        ? await api.post('/scrape-url', { url: customUrl }, auth(token))
+        ? await api.post('/scrape-url', { url: customUrl }, getAuthHeader(token))
         : sourceName
-          ? await api.post('/admin/scrape/source', { source: sourceName }, auth(token))
-          : await api.post('/admin/scrape/all', {}, auth(token));
+          ? await api.post('/admin/scrape/source', { source: sourceName }, getAuthHeader(token))
+          : await api.post('/admin/scrape/all', {}, getAuthHeader(token));
       const id = response.data.task_id;
       setTaskId(id);
       setScrapeStatus('Fetching listings, validating jobs, checking duplicates, and saving results…');
@@ -88,13 +112,14 @@ export default function AdminDashboard({ onClose }) {
     finally { setBusy(false); }
   };
 
+  // Polling for scrape status
   useEffect(() => {
     if (!taskId || !token) return undefined;
     let cancelled = false;
     let timer;
     const poll = async () => {
       try {
-        const { data } = await api.get(`/scrape/status/${encodeURIComponent(taskId)}`, auth(token));
+        const { data } = await api.get(`/scrape/status/${encodeURIComponent(taskId)}`, getAuthHeader(token));
         if (cancelled) return;
         if (data.progress) setScrapeStatus(data.progress);
         if (data.state === 'completed') {
@@ -117,7 +142,7 @@ export default function AdminDashboard({ onClose }) {
 
   const setStatus = async job => {
     setBusy(true); setError('');
-    try { await api.put(`/admin/jobs/${job.id}`, { job_status: job.job_status === 'active' ? 'inactive' : 'active' }, auth(token)); await load(token); }
+    try { await api.put(`/admin/jobs/${job.id}`, { job_status: job.job_status === 'active' ? 'inactive' : 'active' }, getAuthHeader(token)); await load(token); }
     catch (e) { setError(friendlyError(e, 'The job status could not be changed.')); }
     finally { setBusy(false); }
   };
@@ -126,7 +151,7 @@ export default function AdminDashboard({ onClose }) {
     const value = window.prompt('Application URL (leave blank if unavailable):', job.application_url || '');
     if (value === null) return;
     setBusy(true); setError('');
-    try { await api.put(`/admin/jobs/${job.id}`, { application_url: value.trim() }, auth(token)); await load(token); }
+    try { await api.put(`/admin/jobs/${job.id}`, { application_url: value.trim() }, getAuthHeader(token)); await load(token); }
     catch (e) { setError(friendlyError(e, 'The application URL could not be saved.')); }
     finally { setBusy(false); }
   };
@@ -149,7 +174,7 @@ export default function AdminDashboard({ onClose }) {
     if (jobType === null) return;
     changes.job_type = jobType.trim().toLowerCase();
     setBusy(true); setError('');
-    try { await api.put(`/admin/jobs/${job.id}`, changes, auth(token)); await load(token); }
+    try { await api.put(`/admin/jobs/${job.id}`, changes, getAuthHeader(token)); await load(token); }
     catch (e) { setError(friendlyError(e, 'The job could not be updated.')); }
     finally { setBusy(false); }
   };
@@ -157,7 +182,7 @@ export default function AdminDashboard({ onClose }) {
   const removeJob = async job => {
     if (!window.confirm(`Permanently delete “${job.title}” from the database?`)) return;
     setBusy(true); setError('');
-    try { await api.delete(`/admin/jobs/${job.id}`, auth(token)); await load(token); }
+    try { await api.delete(`/admin/jobs/${job.id}`, getAuthHeader(token)); await load(token); }
     catch (e) { setError(friendlyError(e, 'The job could not be deleted.')); }
     finally { setBusy(false); }
   };
@@ -167,7 +192,7 @@ export default function AdminDashboard({ onClose }) {
     const form = event.currentTarget;
     const values = Object.fromEntries(new FormData(form).entries());
     try {
-      const response = await api.post('/admin/jobs', values, auth(token));
+      const response = await api.post('/admin/jobs', values, getAuthHeader(token));
       if (!response.data?.success) throw new Error('The server did not confirm the job was saved.');
       form.reset(); setShowPost(false); await load(token);
     } catch (e) { setError(friendlyError(e, e.message || 'The job could not be posted.')); }
@@ -178,8 +203,9 @@ export default function AdminDashboard({ onClose }) {
     <div className="admin-dashboard">
       <div className="admin-heading"><div><p className="eyebrow">Restricted workspace</p><h2>Admin dashboard</h2></div><button className="icon-button" type="button" onClick={onClose} aria-label="Close admin">×</button></div>
       {!connected ? <form className="admin-login" onSubmit={connect}>
-        <p>Admin routes are verified by the FastAPI server. Enter the configured admin token to continue.</p>
-        <label className="form-field"><span>Admin API token</span><input type="password" autoComplete="current-password" value={draft} onChange={e => setDraft(e.target.value)} required /></label>
+        <p>Admin routes are verified by Firebase. Enter your email and password to continue.</p>
+        <label className="form-field"><span>Admin Email</span><input type="email" autoComplete="email" value={draft} onChange={e => setDraft(e.target.value)} required /></label>
+        <label className="form-field"><span>Password</span><input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
         {error && <p role="alert" className="form-error">{error}</p>}
         <button className="button button-primary" disabled={busy}>{busy ? 'Verifying…' : 'Connect'}</button>
       </form> : <>

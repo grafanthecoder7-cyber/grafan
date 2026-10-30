@@ -34,6 +34,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from scraper import JobScraper
+from firebase_auth import verify_firebase_token
 from cv_parser import CVParser
 from email_sender import EmailSender
 from cv_ai import (
@@ -698,52 +699,8 @@ security_scheme = HTTPBearer(
 )
 
 
-def require_admin(
-    credentials: Optional[
-        HTTPAuthorizationCredentials
-    ] = Depends(security_scheme)
-):
-
-    configured_token = os.environ.get(
-        "ADMIN_API_TOKEN",
-        ""
-    ).strip()
-
-    if (
-        len(configured_token) < 32
-        or configured_token.casefold()
-        in {
-            "replace-with-a-long-random-token",
-            "changeme",
-            "change-me",
-        }
-    ):
-
-        raise HTTPException(
-            status_code=503,
-            detail="Admin access is not configured on this server."
-        )
-
-    token = (
-        credentials.credentials
-        if credentials
-        else ""
-    )
-
-    if not hmac.compare_digest(
-        token,
-        configured_token
-    ):
-
-        raise HTTPException(
-            status_code=401,
-            detail="Admin authentication is required.",
-            headers={
-                "WWW-Authenticate": "Bearer"
-            }
-        )
-
-    return True
+def require_admin(user: dict = Depends(verify_firebase_token)):
+    return user
 
 
 # ============================================================
@@ -7227,6 +7184,7 @@ async def apply_job(
             # EMAIL APPLICANT CONFIRMATION
             # --------------------------------------------------
 
+            print("DEBUG: Inatuma barua pepe...")
             confirmation_sent = (
                 await asyncio.to_thread(
                     email_sender.send_confirmation_email,
@@ -8679,332 +8637,105 @@ SYNONYMS = {
 def match_jobs(
     data: SkillMatch
 ):
-
-    skills_input = (
-        data.skills
-        .strip()
-        .lower()
-    )
+    skills_input = data.skills.strip().lower()
 
     if not skills_input:
-
         raise HTTPException(
             status_code=400,
             detail="Skills are required"
         )
 
-    if len(
-        skills_input
-    ) > 1000:
-
+    if len(skills_input) > 1000:
         raise HTTPException(
             status_code=422,
-            detail=(
-                "Skills must be "
-                "1,000 characters or fewer."
-            )
+            detail="Skills must be 1,000 characters or fewer."
         )
 
-    raw = []
-
-    for part in skills_input.split(","):
-
-        words = part.strip().split()
-
-        for word in words:
-
-            w = word.strip(
-                '.,!?()[]{}"\''
-            )
-
-            if (
-                w
-                and len(w) >= 3
-                and w not in FILLER_WORDS
-            ):
-
-                if w in KNOWN_SKILLS:
-
-                    raw.append(
-                        w
-                    )
-
-        if len(words) >= 2:
-
-            for i in range(
-                len(words) - 1
-            ):
-
-                phrase = (
-                    f"{words[i]} "
-                    f"{words[i + 1]}"
-                )
-
-                if phrase in KNOWN_SKILLS:
-
-                    raw.append(
-                        phrase
-                    )
-
-    skill_list = sorted(
-        set(raw)
-    )
-
-    if not skill_list:
-
-        for skill in KNOWN_SKILLS:
-
-            if re.search(
-                r"(?<![a-z0-9])"
-                + re.escape(
-                    skill
-                )
-                + r"(?![a-z0-9])",
-                skills_input
-            ):
-
-                skill_list.append(
-                    skill
-                )
-
-        skill_list.sort()
+    # Senior Dev Fix: Keep the exact phrase together. 
+    # If the user types "python developer", we search for that exact string.
+    skill_list = [skills_input]
 
     db = SessionLocal()
 
     try:
-
         all_jobs = [
             job
-            for job in db.query(
-                Job
-            ).all()
+            for job in db.query(Job).all()
             if is_displayable_job(job)
         ]
 
-        total_jobs = len(
-            all_jobs
-        )
-
-        if not skill_list:
-
-            return {
-                "success": True,
-                "matched_jobs": [],
-                "total_matches": 0,
-                "total_jobs": total_jobs,
-                "match_percentage": 0,
-                "extracted_skills": [],
-                "message": (
-                    "No valid skills detected."
-                ),
-                "recommendations": [
-                    (
-                        "Try specific skills like "
-                        "'python', 'javascript', 'management'"
-                    )
-                ],
-            }
-
+        total_jobs = len(all_jobs)
         matched = []
 
         for job in all_jobs:
-
+            # Combine all searchable text fields
             text = (
-                f"{job.title.lower()} "
-                f"{(job.company or '').lower()} "
-                f"{(job.description or '').lower()}"
-            )
+                f"{job.title or ''} "
+                f"{job.company or ''} "
+                f"{job.description or ''} "
+                f"{job.requirements or ''} "
+                f"{job.responsibilities or ''}"
+            ).lower()
 
             match_count = 0
-
             matched_skills = []
-
             missing_skills = []
 
             for skill in skill_list:
-
-                found = False
-
+                # Strict boundary matching ensures "java" doesn't match "javascript"
                 if re.search(
-                    r"(?<![a-z0-9])"
-                    + re.escape(skill)
-                    + r"(?![a-z0-9])",
+                    r"(?<![a-z0-9])" + re.escape(skill) + r"(?![a-z0-9])",
                     text
                 ):
-
-                    match_count += 2
-
-                    matched_skills.append(
-                        skill
-                    )
-
-                    found = True
-
+                    match_count += 1
+                    matched_skills.append(skill)
                 else:
+                    missing_skills.append(skill)
 
-                    for key, syns in SYNONYMS.items():
+            # Calculate exact percentage based on the single phrase
+            score = (match_count / len(skill_list)) * 100 if skill_list else 0
 
-                        if (
-                            skill in syns
-                            or skill == key
-                        ):
-
-                            for syn in syns:
-
-                                if re.search(
-                                    r"(?<![a-z0-9])"
-                                    + re.escape(
-                                        syn
-                                    )
-                                    + r"(?![a-z0-9])",
-                                    text
-                                ):
-
-                                    match_count += 1
-
-                                    matched_skills.append(
-                                        f"{skill} → {syn}"
-                                    )
-
-                                    found = True
-
-                                    break
-
-                        if found:
-
-                            break
-
-                if not found:
-
-                    missing_skills.append(
-                        skill
-                    )
-
-            max_score = (
-                len(skill_list)
-                * 2
-            )
-
-            score = (
-                (match_count / max_score)
-                * 100
-                if max_score
-                else 0
-            )
-
-            exact = len([
-                s
-                for s in matched_skills
-                if (
-                    "→" not in s
-                    and "partial" not in s
-                )
-            ])
-
-            if exact > 0:
-
-                score = min(
-                    100,
-                    score + 10
-                )
-
-            matched.append(
-                {
+            # Only include jobs that actually match the phrase
+            if score > 0:
+                matched.append({
                     "jobTitle": job.title,
                     "company": job.company,
                     "jobType": job.job_type,
                     "location": job.location,
                     "salary": job.salary,
-                    "matchScore": round(
-                        score,
-                        1
-                    ),
-                    "matchedSkills": list(
-                        set(
-                            matched_skills
-                        )
-                    ),
-                    "missingSkills": missing_skills[:3],
-                    "whyMatch": (
-                        "The listing mentions "
-                        + ", ".join(
-                            matched_skills
-                        )
-                        + "."
-                    ),
+                    "matchScore": round(score, 1),
+                    "matchedSkills": matched_skills,
+                    "missingSkills": missing_skills,
+                    "whyMatch": f"The listing mentions '{skill}'.",
                     "id": job.id,
-                }
-            )
+                })
 
-        matched.sort(
-            key=lambda x: x["matchScore"],
-            reverse=True
-        )
+        # Sort by best match
+        matched.sort(key=lambda x: x["matchScore"], reverse=True)
 
-        pct = (
-            round(
-                (
-                    len(matched)
-                    / total_jobs
-                )
-                * 100,
-                1
-            )
-            if total_jobs
-            else 0
-        )
-
-        if len(matched) == 0:
-
-            recs = [
-                "Try different skills",
-                "Make sure you have jobs in database",
-                "Use specific skill names",
-            ]
-
-        elif len(matched) < 5:
-
-            recs = [
-                "Add more skills for more matches",
-                "Consider broader terms",
-            ]
-
-        else:
-
-            recs = [
-                (
-                    f"Great! Found "
-                    f"{len(matched)} jobs "
-                    f"out of "
-                    f"{total_jobs}"
-                ),
-                (
-                    "Add more skills "
-                    "for better matches"
-                ),
-            ]
+        pct = round((len(matched) / total_jobs) * 100, 1) if total_jobs else 0
 
         return {
             "success": True,
             "matched_jobs": matched[:20],
-            "total_matches": len(
-                matched
-            ),
+            "total_matches": len(matched),
             "total_jobs": total_jobs,
             "match_percentage": pct,
             "extracted_skills": skill_list,
-            "recommendations": recs,
+            "recommendations": (
+                [f"Great! Found {len(matched)} jobs matching '{skills_input}'."]
+                if len(matched) > 0 
+                else ["No jobs found with this exact phrase. Try a broader term."]
+            ),
             "message": (
-                f"Found {len(matched)} "
-                f"matching jobs out of "
-                f"{total_jobs} total jobs "
+                f"Found {len(matched)} matching jobs out of {total_jobs} total jobs "
                 f"({pct}% match rate)"
             ),
         }
 
     finally:
-
         db.close()
+            
 
 
 # ============================================================

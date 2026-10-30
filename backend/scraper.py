@@ -426,6 +426,14 @@ class JobScraper:
                 title = title.strip()
 
                 context = job_data.get('description', '')
+                
+                # NEW: Fetch full details from the individual job page
+                job_url = job_data.get('source_url', current_url)
+                if job_url and job_url != current_url:
+                    full_page_text = self.scrape_full_job_page(job_url)
+                    if full_page_text:
+                        context = full_page_text
+                        
                 requirements = self.extract_labeled_section(context, ['requirements', 'what you will need', 'what we are looking for'])
                 responsibilities = self.extract_labeled_section(context, ['responsibilities', 'duties', 'role overview'])
                 qualifications = self.extract_labeled_section(context, ['qualifications', 'education'])
@@ -445,7 +453,7 @@ class JobScraper:
                         'source': source,
                         'url': current_url,
                         'source_url': job_data.get('source_url', current_url),
-                        'description': job_data.get('description', ''),
+                        'description': context,
                         'requirements': requirements,
                         'responsibilities': responsibilities,
                         'qualifications': qualifications,
@@ -551,6 +559,50 @@ class JobScraper:
 
         return unique_jobs
 
-    @staticmethod
-    def get_configured_sources():
-        return [{"name": name, "url": url, "status": "configured"} for name, url, _method in CONFIGURED_SOURCES]
+
+    def get_configured_sources(self):
+        return [
+            {"name": "BrighterMonday", "url": "https://www.brightermonday.co.tz/jobs"},
+            {"name": "Ajira Zote", "url": "https://ajirazote.com"},
+            {"name": "Ajirayako", "url": "https://ajirayako.co.tz"},
+            {"name": "Mabumbe", "url": "https://mabumbe.com"}
+        ]
+
+    def get_configured_sources(self):
+        return [
+            {"name": "BrighterMonday", "url": "https://www.brightermonday.co.tz/jobs"},
+            {"name": "Ajira Zote", "url": "https://ajirazote.com"},
+            {"name": "Ajirayako", "url": "https://ajirayako.co.tz"},
+            {"name": "Mabumbe", "url": "https://mabumbe.com"}
+        ]
+
+    def scrape_full_job_page(self, job_url):
+        """Fetches the individual job page and extracts the full details."""
+        if not job_url:
+            return ""
+        try:
+            response = self.session.get(job_url, headers=self.get_headers(), timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            desc_div = (
+                soup.find('div', class_='job-details') or
+                soup.find('div', class_='job-description') or
+                soup.find('div', class_='job-details__description-content') or
+                soup.find('article') or 
+                soup.find('main')
+            )
+            
+            if desc_div:
+                for br in desc_div.find_all('br'):
+                    br.replace_with('\n')
+                for p in desc_div.find_all(['p', 'div', 'h2', 'h3', 'h4', 'li']):
+                    p.append('\n') 
+                text = desc_div.get_text(separator='\n', strip=True)
+                import re
+                return re.sub(r'\n{3,}', '\n\n', text)
+            return ""
+        except Exception as e:
+            print(f'   ⚠️ Could not fetch full details for {job_url}: {e}')
+            return ""

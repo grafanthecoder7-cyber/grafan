@@ -53,3 +53,7 @@ Thumbs.db
 *.backup
 *.old
 *~
+.env
+firebase-service-account.json
+venv/
+node_modules/
