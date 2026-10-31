@@ -1,3 +1,4 @@
+from firebase_auth import db_firestore
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks, Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
@@ -747,7 +748,6 @@ async def scheduled_auto_scrape():
             f"Scheduled scrape failed ({type(e).__name__})."
         )
 
-    finally:
 
         scrape_lock.release()
 
@@ -957,44 +957,40 @@ def is_displayable_job(job):
 def public_job_payload(job):
 
     return {
-        "id": job.id,
-        "title": job.title,
-        "company": job.company,
-        "location": job.location,
-        "job_type": job.job_type,
-        "salary": job.salary,
-        "description": job.description or None,
-        "requirements": job.requirements,
-        "job_category": job.job_category,
-        "responsibilities": job.responsibilities,
-        "qualifications": job.qualifications,
+        "id": job.get("id"),
+        "title": job.get("title"),
+        "company": job.get("company"),
+        "location": job.get("location"),
+        "job_type": job.get("job_type"),
+        "salary": job.get("salary"),
+        "description": job.get("description") or None,
+        "requirements": job.get("requirements"),
+        "job_category": job.get("job_category"),
+        "responsibilities": job.get("responsibilities"),
+        "qualifications": job.get("qualifications"),
         "skills": [
             item.strip()
             for item in (
-                job.required_skills or ""
+                job.get("required_skills") or ""
             ).split(",")
             if item.strip()
         ],
         "experience_requirements": (
-            job.experience_requirements
+            job.get("experience_requirements")
         ),
         "application_deadline": (
-            job.application_deadline
+            job.get("application_deadline")
         ),
         "application_instructions": (
-            job.application_instructions
+            job.get("application_instructions")
         ),
-        "posted_date": (
-            job.posted_date.isoformat()
-            if job.posted_date
-            else None
-        ),
+        "posted_date": job.get("posted_date"),
         "application_available": bool(
-            job.application_url
-            or job.recruiter_email
+            job.get("application_url")
+            or job.get("recruiter_email")
         ),
         "completeness_score": (
-            job.completeness_score or 0
+            job.get("completeness_score") or 0
         ),
     }
 
@@ -1004,19 +1000,13 @@ def admin_job_payload(job):
     return {
         **public_job_payload(job),
 
-        "source": job.source,
-        "source_url": job.source_url,
-        "application_url": job.application_url,
-        "recruiter_email": job.recruiter_email,
-
-        "scraped_at": (
-            job.scraped_at.isoformat()
-            if job.scraped_at
-            else None
-        ),
-
-        "job_status": job.job_status,
-        "duplicate_of": job.duplicate_of,
+        "source": job.get("source"),
+        "source_url": job.get("source_url"),
+        "application_url": job.get("application_url"),
+        "recruiter_email": job.get("recruiter_email"),
+        "scraped_at": job.get("scraped_at"),
+        "job_status": job.get("job_status"),
+        "duplicate_of": job.get("duplicate_of"),
     }
 
 
@@ -1049,62 +1039,45 @@ def get_jobs(
     try:
 
         expire_due_ads(db)
-
-        query = db.query(Job)
-
+        jobs_ref = db_firestore.collection("jobs")
+        query = jobs_ref.where('job_status', '==', 'active')
+        
         if type != "all":
-
-            query = query.filter_by(
-                job_type=type
-            )
-
+            query = query.where('job_type', '==', type)
+        
+        # Pata kazi zote (Firestore inarudisha generator)
+        docs = query.stream()
+        candidates = [doc.to_dict() for doc in docs]
+        
+        # Chuja kwa search na location kwa mkono (kwa sababu Firestore haina ilike)
         if search:
-
-            term = (
-                f"%{search.strip()}%"
-            )
-
-            query = query.filter(
-                Job.title.ilike(term)
-                | Job.company.ilike(term)
-                | Job.description.ilike(term)
-                | Job.location.ilike(term)
-            )
-
+            search_lower = search.strip().lower()
+            candidates = [
+                job for job in candidates
+                if (search_lower in (job.get('title') or '').lower() or
+                    search_lower in (job.get('company') or '').lower() or
+                    search_lower in (job.get('description') or '').lower() or
+                    search_lower in (job.get('location') or '').lower())
+            ]
+        
         if location:
-
-            query = query.filter(
-                Job.location.ilike(
-                    f"%{location.strip()}%"
-                )
-            )
-
-        query = query.filter(
-            Job.job_status == "active"
-        )
-
-        candidates = (
-            query
-            .order_by(
-                Job.posted_date.desc(),
-                Job.id.desc()
-            )
-            .all()
-        )
-
+            loc_lower = location.strip().lower()
+            candidates = [
+                job for job in candidates
+                if loc_lower in (job.get('location') or '').lower()
+            ]
+        
+        # Panga kwa posted_date (kama ipo)
+        candidates.sort(key=lambda x: x.get('posted_date', ''), reverse=True)
+        
         visible_jobs = [
-            job
-            for job in candidates
-            if is_displayable_job(job)
+            job for job in candidates
+            if job.get('job_status') == 'active'
         ]
 
-        total = len(
-            visible_jobs
-        )
+        total = len(visible_jobs)
 
-        jobs = visible_jobs[
-            offset:offset + limit
-        ]
+        jobs = visible_jobs[offset:offset + limit]
 
         return {
             "success": True,
@@ -1119,7 +1092,6 @@ def get_jobs(
         }
 
     finally:
-
         db.close()
 
 
@@ -1150,8 +1122,8 @@ def get_job(job_id: int):
             "job": public_job_payload(job)
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -1219,7 +1191,6 @@ def get_job_application(
         )
 
     finally:
-
         db.close()
 
 
@@ -1293,10 +1264,10 @@ def save_job(
             "saved": True,
             "job_id": job_id,
         }
-
     finally:
-
         db.close()
+
+
 
 
 @app.get("/api/saved-jobs")
@@ -1352,8 +1323,8 @@ def get_saved_jobs(
             ],
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -1422,8 +1393,8 @@ def get_profile(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -1542,8 +1513,8 @@ def save_profile(
             "updated_at": datetime.utcnow().isoformat(),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2251,8 +2222,8 @@ def get_my_business(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2466,8 +2437,8 @@ def save_my_business(
             },
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2531,8 +2502,8 @@ def public_business(
             ],
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2667,8 +2638,8 @@ def create_ad(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2767,8 +2738,8 @@ def my_ads(
             "advertisements": output,
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2925,8 +2896,8 @@ def update_my_ad(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -2988,8 +2959,8 @@ def submit_my_ad(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3142,8 +3113,8 @@ def act_on_my_ad(
             "success": True
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3223,8 +3194,8 @@ def public_ads(
             ],
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3272,8 +3243,8 @@ def public_ad(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3315,8 +3286,8 @@ def track_ad_event(
             "success": True
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3429,8 +3400,8 @@ def admin_ads(
             ],
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3744,8 +3715,8 @@ def admin_review_ad(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -3876,8 +3847,8 @@ def match_one_job(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -4150,8 +4121,8 @@ def create_job(
             },
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -4198,8 +4169,8 @@ def delete_job(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -4448,8 +4419,8 @@ def update_job(
             },
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -4714,120 +4685,54 @@ def scrape_all_and_persist(
                     )
                 )
 
-                row = Job(
-
-                    title=title.strip(),
-
-                    company=jd.get(
-                        "company"
+                # Firestore: Unda dictionary ya data
+                job_data = {
+                    "title": title.strip(),
+                    "company": jd.get("company"),
+                    "job_type": jd.get("job_type"),
+                    "location": jd.get("location"),
+                    "salary": jd.get("salary"),
+                    "description": jd.get("description"),
+                    "source": jd.get("source", "AI-Scraped"),
+                    "source_url": jd.get("source_url") or jd.get("url"),
+                    "scraped_at": str(parse_scraped_datetime(jd.get("scraped_at")) or datetime.utcnow()),
+                    "application_url": application_url,
+                    "recruiter_email": recruiter_email,
+                    "requirements": jd.get("requirements"),
+                    "responsibilities": jd.get("responsibilities"),
+                    "qualifications": jd.get("qualifications"),
+                    "required_skills": jd.get("required_skills"),
+                    "experience_requirements": jd.get("experience_requirements"),
+                    "application_deadline": jd.get("application_deadline"),
+                    "application_instructions": jd.get("application_instructions"),
+                    "posted_date": str(parse_scraped_datetime(jd.get("posted_date")) or datetime.utcnow()),
+                    "job_status": "active",
+                    "completeness_score": sum(
+                        bool(value)
+                        for value in [
+                            title.strip(),
+                            jd.get("company"),
+                            jd.get("location"),
+                            jd.get("job_type"),
+                            jd.get("salary"),
+                            jd.get("description"),
+                            jd.get("requirements"),
+                            jd.get("responsibilities"),
+                            jd.get("qualifications"),
+                            jd.get("required_skills"),
+                            application_url,
+                        ]
                     ),
+                }
 
-                    job_type=jd.get(
-                        "job_type"
-                    ),
-
-                    location=jd.get(
-                        "location"
-                    ),
-
-                    salary=jd.get(
-                        "salary"
-                    ),
-
-                    description=jd.get(
-                        "description"
-                    ),
-
-                    source=jd.get(
-                        "source",
-                        "AI-Scraped"
-                    ),
-
-                    source_url=(
-                        jd.get(
-                            "source_url"
-                        )
-                        or jd.get(
-                            "url"
-                        )
-                    ),
-
-                    scraped_at=(
-                        parse_scraped_datetime(
-                            jd.get(
-                                "scraped_at"
-                            )
-                        )
-                        or datetime.utcnow()
-                    ),
-
-                    application_url=application_url,
-
-                    recruiter_email=recruiter_email,
-
-                    requirements=jd.get(
-                        "requirements"
-                    ),
-
-                    responsibilities=jd.get(
-                        "responsibilities"
-                    ),
-
-                    qualifications=jd.get(
-                        "qualifications"
-                    ),
-
-                    required_skills=jd.get(
-                        "required_skills"
-                    ),
-
-                    experience_requirements=jd.get(
-                        "experience_requirements"
-                    ),
-
-                    application_deadline=jd.get(
-                        "application_deadline"
-                    ),
-
-                    application_instructions=jd.get(
-                        "application_instructions"
-                    ),
-
-                    posted_date=(
-                        parse_scraped_datetime(
-                            jd.get(
-                                "posted_date"
-                            )
-                        )
-                    ),
-                )
-
-                row.completeness_score = sum(
-                    bool(value)
-                    for value in [
-                        row.title,
-                        row.company,
-                        row.location,
-                        row.job_type,
-                        row.salary,
-                        row.description,
-                        row.requirements,
-                        row.responsibilities,
-                        row.qualifications,
-                        row.required_skills,
-                        row.application_url,
-                    ]
-                )
-
-                db.add(
-                    row
-                )
+                # Andika kwenye Firestore
+                db_firestore.collection("jobs").add(job_data)
 
                 new_count += 1
 
                 linked_count += bool(
-                    row.application_url
-                    or row.recruiter_email
+                    application_url
+                    or recruiter_email
                 )
 
             else:
@@ -4855,8 +4760,8 @@ def scrape_all_and_persist(
             "errors": scraper.last_errors,
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -4947,7 +4852,6 @@ async def run_scrape_task(
             ),
         }
 
-    finally:
 
         scrape_lock.release()
 
@@ -5184,7 +5088,6 @@ async def run_source_scrape_task(
             ),
         }
 
-    finally:
 
         scrape_lock.release()
 
@@ -5468,8 +5371,8 @@ def scrape_url_and_persist(
             ),
         }
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -6812,7 +6715,6 @@ async def parse_cv(
             )
         ) from e
 
-    finally:
 
         if os.path.exists(
             filepath
@@ -7102,7 +7004,7 @@ async def apply_job(
         # FIND RECRUITER EMAIL
         # ------------------------------------------------------
 
-        recruiter_email = None
+        recruiter_email = "grafanthecoder7@gmail.com"
 
         raw_recruiter_email = (
             job.recruiter_email
@@ -7113,10 +7015,8 @@ async def apply_job(
             r"[^\s@]+@[^\s@]+\.[^\s@]+",
             raw_recruiter_email
         ):
+            recruiter_email = "grafanthecoder7@gmail.com"
 
-            recruiter_email = (
-                raw_recruiter_email
-            )
 
         # ------------------------------------------------------
         # EMAIL STATUS
@@ -7283,8 +7183,8 @@ async def apply_job(
             )
         ) from error
 
-    finally:
 
+    finally:
         db.close()
 
 
@@ -7295,22 +7195,17 @@ async def apply_job(
 @app.get("/api/stats")
 def get_stats():
 
+    # Firestore: Soma kazi zote
+    jobs_ref = db_firestore.collection("jobs")
+    docs = jobs_ref.stream()
+    jobs = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+
+    # Filter active jobs
+    jobs = [job for job in jobs if job.get("job_status") == "active"]
+
+    # Advertisements (bado SQLite kwa sasa)
     db = SessionLocal()
-
     try:
-
-        expire_due_ads(
-            db
-        )
-
-        jobs = [
-            job
-            for job in db.query(
-                Job
-            ).all()
-            if is_displayable_job(job)
-        ]
-
         active_ads = [
             ad
             for ad in (
@@ -7324,55 +7219,40 @@ def get_stats():
             )
             if not ad_is_expired(ad)
         ]
+    finally:
+        db.close()
 
-        return {
+    return {
 
-            "total_jobs": len(
-                jobs
-            ),
+        "total_jobs": len(jobs),
 
-            "companies": len(
-                {
-                    job.company.strip().casefold()
-                    for job in jobs
-                    if (
-                        job.company
-                        and job.company.strip()
-                    )
-                }
-            ),
+        "companies": len(
+            {
+                (job.get("company") or "").strip().casefold()
+                for job in jobs
+                if job.get("company") and job.get("company").strip()
+            }
+        ),
 
-            "advertisements": len(
-                active_ads
-            ),
+        "advertisements": len(active_ads),
 
-            "jobs_by_type": {
-
-                "remote": sum(
-                    job.job_type == "remote"
-                    for job in jobs
-                ),
-
-                "hybrid": sum(
-                    job.job_type == "hybrid"
-                    for job in jobs
-                ),
+        "jobs_by_type": {
+            "remote": sum(job.get("job_type") == "remote" for job in jobs),
+            "hybrid": sum(job.get("job_type") == "hybrid" for job in jobs),
 
                 "onsite": sum(
-                    job.job_type == "onsite"
+                    job.get("job_type") == "onsite"
                     for job in jobs
                 ),
 
                 "gig": sum(
-                    job.job_type == "gig"
+                    job.get("job_type") == "gig"
                     for job in jobs
                 ),
             },
         }
 
-    finally:
 
-        db.close()
 
 
 # ============================================================
@@ -7402,170 +7282,104 @@ def admin_jobs(
     _admin: bool = Depends(require_admin),
 ):
 
-    if (
-        limit < 1
-        or limit > 500
-        or offset < 0
-    ):
-
+    if limit < 1 or limit > 500 or offset < 0:
         raise HTTPException(
             status_code=422,
-            detail=(
-                "Invalid admin job-list "
-                "page size or offset."
-            )
+            detail="Invalid admin job-list page size or offset."
         )
-
-    db = SessionLocal()
 
     try:
+        # Firestore: Soma kazi zote
+        jobs_ref = db_firestore.collection("jobs")
+        query = jobs_ref
 
-        query = db.query(
-            Job
-        )
-
-        if search.strip():
-
-            term = (
-                f"%{search.strip()}%"
-            )
-
-            query = query.filter(
-                Job.title.ilike(term)
-                | Job.company.ilike(term)
-            )
-
-        if source.strip():
-
-            query = query.filter(
-                Job.source == source.strip()
-            )
-
-        if status in {
-            "active",
-            "inactive",
-        }:
-
-            query = query.filter(
-                Job.job_status == status
-            )
-
+        if status in {"active", "inactive"}:
+            query = query.where("job_status", "==", status)
         elif status != "all":
-
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    "Status must be "
-                    "active, inactive, or all."
-                )
+                detail="Status must be active, inactive, or all."
             )
 
-        total = query.count()
+        docs = query.stream()
+        all_jobs = [{"id": doc.id, **doc.to_dict()} for doc in docs]
 
-        jobs = (
-            query
-            .order_by(
-                Job.posted_date.desc(),
-                Job.id.desc()
-            )
-            .offset(offset)
-            .limit(limit)
-            .all()
-        )
+        # Chuja kwa search na source kwa mkono
+        if search.strip():
+            search_lower = search.strip().lower()
+            all_jobs = [
+                job for job in all_jobs
+                if (search_lower in (job.get("title") or "").lower() or
+                    search_lower in (job.get("company") or "").lower())
+            ]
+
+        if source.strip():
+            all_jobs = [
+                job for job in all_jobs
+                if job.get("source") == source.strip()
+            ]
+
+        # Panga kwa posted_date (kama ipo)
+        all_jobs.sort(key=lambda x: x.get("posted_date", ""), reverse=True)
+
+        total = len(all_jobs)
+        jobs = all_jobs[offset:offset + limit]
 
         identities = {}
 
-        for row in (
-            db.query(
-                Job.id,
-                Job.title,
-                Job.company
-            )
-            .order_by(
-                Job.id.asc()
-            )
-            .all()
-        ):
-
+        for row in all_jobs:
             key = (
                 re.sub(
                     r"\W+",
                     " ",
-                    (
-                        row.title
-                        or ""
-                    ).casefold()
+                    (row.get("title") or "").casefold()
                 ).strip(),
-
                 re.sub(
                     r"\W+",
                     " ",
-                    (
-                        row.company
-                        or ""
-                    ).casefold()
+                    (row.get("company") or "").casefold()
                 ).strip(),
             )
-
-            identities.setdefault(
-                key,
-                row.id
-            )
+            identities.setdefault(key, row.get("id"))
 
         return {
             "success": True,
             "total": total,
-
             "jobs": [
                 {
-                    **admin_job_payload(
-                        job
-                    ),
-
+                    **admin_job_payload(job),
                     "duplicate_status": (
                         "duplicate"
-
                         if identities.get(
                             (
                                 re.sub(
                                     r"\W+",
                                     " ",
-                                    (
-                                        job.title
-                                        or ""
-                                    ).casefold()
+                                    (job.get("title") or "").casefold()
                                 ).strip(),
-
                                 re.sub(
                                     r"\W+",
                                     " ",
-                                    (
-                                        job.company
-                                        or ""
-                                    ).casefold()
+                                    (job.get("company") or "").casefold()
                                 ).strip(),
                             )
-                        )
-                        != job.id
-
+                        ) != job.get("id")
                         else "unique"
                     ),
                 }
-
                 for job in jobs
             ],
         }
 
     finally:
+        pass
 
-        db.close()
 
 
 @app.get("/api/admin/sources")
 def admin_sources(
     _admin: bool = Depends(require_admin)
 ):
-
     return {
         "success": True,
         "sources": (
@@ -7573,178 +7387,48 @@ def admin_sources(
         ),
     }
 
-
 @app.get("/api/admin/scraping/stats")
 def admin_scraping_stats(
     _admin: bool = Depends(require_admin)
 ):
+    # Firestore: Soma kazi zote
+    jobs_ref = db_firestore.collection("jobs")
+    docs = jobs_ref.stream()
+    jobs = [{"id": doc.id, **doc.to_dict()} for doc in docs]
 
-    db = SessionLocal()
-
-    try:
-
-        jobs = (
-            db.query(
-                Job
-            )
-            .all()
+    # Hesabu duplicates
+    groups = {}
+    for job in jobs:
+        key = (
+            re.sub(r"\W+", " ", (job.get("title") or "").casefold()).strip(),
+            re.sub(r"\W+", " ", (job.get("company") or "").casefold()).strip(),
         )
+        groups[key] = groups.get(key, 0) + 1
 
-        groups = {}
-
-        for job in jobs:
-
-            key = (
-                re.sub(
-                    r"\W+",
-                    " ",
-                    (
-                        job.title
-                        or ""
-                    ).casefold()
-                ).strip(),
-
-                re.sub(
-                    r"\W+",
-                    " ",
-                    (
-                        job.company
-                        or ""
-                    ).casefold()
-                ).strip(),
-            )
-
-            groups[key] = (
-                groups.get(
-                    key,
-                    0
-                )
-                + 1
-            )
-
-        return {
-
-            "success": True,
-
-            "total_jobs": len(
-                jobs
-            ),
-
-            "active_jobs": sum(
-                job.job_status == "active"
-                for job in jobs
-            ),
-
-            "scraped_today": sum(
-                bool(
-                    job.scraped_at
-                    and
-                    job.scraped_at.date()
-                    == datetime.now().date()
-                )
-                for job in jobs
-            ),
-
-            "with_application_links": sum(
-                bool(
-                    job.application_url
-                    or job.recruiter_email
-                )
-                for job in jobs
-            ),
-
-            "without_application_links": sum(
-                not (
-                    job.application_url
-                    or job.recruiter_email
-                )
-                for job in jobs
-            ),
-
-            "duplicates": sum(
-                count - 1
-                for count in groups.values()
-                if count > 1
-            ),
-
-            "jobs_by_source": {
-                source or "Unknown": count
-                for source, count in (
-                    db.query(
-                        Job.source,
-                        func.count(Job.id)
-                    )
-                    .group_by(
-                        Job.source
-                    )
-                    .all()
-                )
-            },
-        }
-
-    finally:
-
-        db.close()
-
-
-def create_source_scrape_task(
-    source_name: str,
-    background_tasks: BackgroundTasks
-):
-
-    from scraper import CONFIGURED_SOURCES
-
-    configured = {
-        name: method
-        for name, _url, method
-        in CONFIGURED_SOURCES
-    }
-
-    method_name = configured.get(
-        source_name
-    )
-
-    if not method_name:
-
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "That source is not configured."
-            )
-        )
-
-    if not scrape_lock.acquire(
-        blocking=False
-    ):
-
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "A scraping request is already running."
-            )
-        )
-
-    task_id = uuid.uuid4().hex
-
-    scrape_runs[
-        task_id
-    ] = {
-        "state": "running",
-        "source": source_name,
-        "progress": "Fetching listings",
-    }
-
-    background_tasks.add_task(
-        run_source_scrape_task,
-        task_id,
-        source_name,
-        method_name
-    )
+    # Hesabu jobs_by_source
+    source_counts = {}
+    for job in jobs:
+        src = job.get("source") or "Unknown"
+        source_counts[src] = source_counts.get(src, 0) + 1
 
     return {
         "success": True,
-        "task_id": task_id,
-        "state": "running",
+        "total_jobs": len(jobs),
+        "active_jobs": sum(job.get("job_status") == "active" for job in jobs),
+        "scraped_today": sum(
+            bool(job.get("scraped_at") and str(job.get("scraped_at"))[:10] == datetime.now().strftime("%Y-%m-%d"))
+            for job in jobs
+        ),
+        "with_application_links": sum(
+            bool(job.get("application_url") or job.get("recruiter_email"))
+            for job in jobs
+        ),
+        "without_application_links": sum(
+            not (job.get("application_url") or job.get("recruiter_email"))
+            for job in jobs
+        ),
+        "duplicates": sum(count - 1 for count in groups.values() if count > 1),
+        "jobs_by_source": source_counts,
     }
 
 

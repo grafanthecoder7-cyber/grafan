@@ -28,3 +28,7 @@ def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depends(se
             status_code=401, 
             detail=f"Invalid authentication credentials: {str(e)}"
         )
+
+# Initialize Firestore
+from firebase_admin import firestore
+db_firestore = firestore.client()
