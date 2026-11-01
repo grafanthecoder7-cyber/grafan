@@ -226,7 +226,7 @@ function App() {
   };
 
   const handleApplyNow = job => {
-    if (!job || !job.id) {
+    if (!job) {
       setNotice({ type: 'error', message: 'This job cannot be opened for application.' });
       return;
     }
