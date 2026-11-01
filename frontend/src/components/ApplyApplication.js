@@ -57,7 +57,7 @@ export default function ApplyApplication({ job, onClose }) {
     if (!cv) return setError('Please attach your CV.');
 
     const data = new FormData();
-    data.append('job_id', String(job.id));
+    data.append('job_id', String(job.id || 0));
     data.append('applicant_name', form.applicant_name.trim());
     data.append('applicant_email', form.applicant_email.trim());
     data.append('applicant_phone', form.applicant_phone.trim());
